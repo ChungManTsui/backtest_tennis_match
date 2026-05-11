@@ -1,0 +1,6 @@
+**/__pycache__/
+*.pyc
+*.pyo
+data/*.log
+data/backtest_results.csv
+data/bet_log.csv
