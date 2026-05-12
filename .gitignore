@@ -5,3 +5,4 @@ data/*.log
 data/backtest_results.csv
 data/bet_log.csv
 note.txt
+tennis/.env

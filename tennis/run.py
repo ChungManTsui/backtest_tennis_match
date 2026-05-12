@@ -10,8 +10,13 @@ import os
 import sys
 import time
 
-# tennis/ folder is the same directory as this file
 sys.path.insert(0, os.path.dirname(__file__))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+except ImportError:
+    pass
 
 
 def ask(prompt: str, default: str) -> str:
