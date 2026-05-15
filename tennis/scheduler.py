@@ -260,15 +260,16 @@ def save_bankroll(bankroll: float):
         json.dump({"bankroll": round(bankroll, 2)}, f)
 
 
-def fetch_results_and_update():
+def fetch_results_and_update(log_file: str = None):
     """
-    Auto-fetch yesterday's ATP results from Sackmann live feed or API
-    and fill in W/L in bet_log.csv automatically.
+    Auto-fetch yesterday's results and fill in W/L in the bet log automatically.
     Uses The Odds API scores endpoint.
     """
-    if not os.path.exists(LOG_FILE):
+    if log_file is None:
+        log_file = LOG_FILE
+    if not os.path.exists(log_file):
         return
-    df = pd.read_csv(LOG_FILE)
+    df = pd.read_csv(log_file)
     pending = df[df["result"].astype(str).str.strip() == ""]
     if pending.empty:
         return
@@ -327,7 +328,7 @@ def fetch_results_and_update():
         print(f"  Auto-result: {row['home']} vs {row['away']} → {total_games} games → {result} (£{pnl:+.2f})")
 
     if updated:
-        df.to_csv(LOG_FILE, index=False)
+        df.to_csv(log_file, index=False)
         print(f"  {updated} result(s) auto-filled.")
         # compound bankroll: add yesterday's P&L
         yesterday_pnl = df[df["date"] == str(date.today() - timedelta(days=1))]["pnl"]
@@ -337,11 +338,12 @@ def fetch_results_and_update():
         print(f"  Bankroll updated: £{load_bankroll() - yesterday_pnl:.2f} → £{new_bankroll:.2f} ({yesterday_pnl:+.2f})")
 
 
-
-def get_pnl_summary() -> dict:
-    if not os.path.exists(LOG_FILE):
+def get_pnl_summary(log_file: str = None) -> dict:
+    if log_file is None:
+        log_file = LOG_FILE
+    if not os.path.exists(log_file):
         return {}
-    df = pd.read_csv(LOG_FILE)
+    df = pd.read_csv(log_file)
     settled = df[df["result"].astype(str).str.strip().str.upper().isin(["W", "L"])].copy()
     if settled.empty:
         return {}
@@ -366,9 +368,12 @@ def _ask(prompt: str, default: str) -> str:
     return val if val else default
 
 
-def main():
+def main(tours=None):
     today   = str(date.today())
     surface = get_surface()
+
+    if tours is None:
+        tours = ["atp"]
 
     # Ask for settings if not set as env vars
     bankroll       = load_bankroll(float(os.environ.get("BANKROLL", "100")))
@@ -376,77 +381,93 @@ def main():
     max_stake      = float(os.environ.get("MAX_STAKE")      or _ask("Max stake per bet (e.g. 0.05 = 5%)", "0.05"))
 
     print("=" * 60)
-    print(f"  ATP TENNIS SCHEDULER — {today}")
+    print(f"  TENNIS SCHEDULER — {today} — {'/'.join(t.upper() for t in tours)}")
     print(f"  Surface: {surface} | Bankroll: £{bankroll} | Kelly: {kelly_fraction*100:.0f}% | Max stake: {max_stake*100:.0f}%")
     print("=" * 60)
 
-    # Step 1 — Auto-fill yesterday's results
-    print("\nChecking yesterday's results...")
+    for tour in tours:
+        log_file = f"tennis/data/bet_log_{tour}.csv"
+
+        # Step 1 — Auto-fill yesterday's results
+        print(f"\n[{tour.upper()}] Checking yesterday's results...")
+        try:
+            fetch_results_and_update(log_file=log_file)
+        except Exception as e:
+            print(f"  Result fetch failed: {e}")
+
+        # Step 2 — Send P&L update
+        pnl = get_pnl_summary(log_file=log_file)
+        if pnl:
+            print(f"\n  Running P&L: {pnl['wins']}/{pnl['total_bets']} won | "
+                  f"ROI {pnl['roi']:+.1f}% | P&L £{pnl['total_pnl']:+.2f}")
+            send_pnl_update(pnl, today)
+
+        # Step 3 — Load data and build profiles
+        print(f"\nLoading {tour.upper()} data...")
+        df = load_data(START_YEAR, END_YEAR, tour=tour)
+        print("Building serve profiles...")
+        lookup = build_lookup(df)
+        print(f"  {len(lookup)} profiles loaded")
+
+        # Step 4 — Fetch today's odds
+        print(f"\nFetching {tour.upper()} odds...")
+        if not ODDS_API_KEY:
+            print("  ERROR: ODDS_API_KEY not set.")
+            send_heartbeat(today, "ERROR: No API key")
+            return
+
+        events  = fetch_odds()
+        matches = parse_events(events)
+        print(f"  {len(matches)} match(es) with totals lines")
+
+        # Step 5 — Predict
+        bets = []
+        all_matches = []
+        for m in matches:
+            bet = predict(m["home"], m["away"], m["line"],
+                          m["over_odds"], m["under_odds"], surface, lookup,
+                          avg_over=m.get("avg_over"), avg_under=m.get("avg_under"))
+            stake = None
+            if bet:
+                stake = bankroll * min(bet["kelly"] * kelly_fraction, max_stake)
+                bets.append((m["home"], m["away"], bet, stake))
+                print(f"  ★ {m['home']} vs {m['away']}: {bet['side']} {bet['line']} "
+                      f"@ {bet['odds']} | edge {bet['edge']}% | £{stake:.2f}")
+            else:
+                print(f"  — {m['home']} vs {m['away']}: no edge")
+            all_matches.append((m["home"], m["away"], m["line"],
+                                m["over_odds"], m["under_odds"], bet, stake, m.get("time_uk", "?")))
+
+        # Step 6 — Log bets
+        log_bets(bets, surface, today)
+
+        # Step 7 — Telegram alert
+        send_predictions(all_matches, bets, surface, today, bankroll,
+                         kelly_fraction=kelly_fraction, max_stake=max_stake)
+
+        print(f"\n  [{tour.upper()}] Done. {len(bets)} bet(s) sent to Telegram.")
+
+    # Step 8 — Regenerate dashboard
     try:
-        fetch_results_and_update()
+        sys.path.insert(0, os.path.dirname(__file__))
+        from live_dashboard import generate_dashboard
+        tours_with_data = [t for t in tours if os.path.exists(f"tennis/data/bet_log_{t}.csv")]
+        if tours_with_data:
+            generate_dashboard(tours_with_data)
     except Exception as e:
-        print(f"  Result fetch failed: {e}")
+        print(f"  Dashboard generation failed: {e}")
 
-    # Step 2 — Send P&L update
-    pnl = get_pnl_summary()
-    if pnl:
-        print(f"\n  Running P&L: {pnl['wins']}/{pnl['total_bets']} won | "
-              f"ROI {pnl['roi']:+.1f}% | P&L £{pnl['total_pnl']:+.2f}")
-        send_pnl_update(pnl, today)
-
-    # Step 3 — Load data and build profiles
-    print("\nLoading ATP data...")
-    df = load_data(START_YEAR, END_YEAR)
-    print("Building serve profiles...")
-    lookup = build_lookup(df)
-    print(f"  {len(lookup)} profiles loaded")
-
-    # Step 4 — Fetch today's odds
-    print("\nFetching today's odds...")
-    if not ODDS_API_KEY:
-        print("  ERROR: ODDS_API_KEY not set.")
-        send_heartbeat(today, "ERROR: No API key")
-        return
-
-    events  = fetch_odds()
-    matches = parse_events(events)
-    print(f"  {len(matches)} match(es) with totals lines")
-
-    # Step 5 — Predict
-    bets = []
-    all_matches = []
-    for m in matches:
-        bet = predict(m["home"], m["away"], m["line"],
-                      m["over_odds"], m["under_odds"], surface, lookup,
-                      avg_over=m.get("avg_over"), avg_under=m.get("avg_under"))
-        stake = None
-        if bet:
-            stake = bankroll * min(bet["kelly"] * kelly_fraction, max_stake)
-            bets.append((m["home"], m["away"], bet, stake))
-            print(f"  ★ {m['home']} vs {m['away']}: {bet['side']} {bet['line']} "
-                  f"@ {bet['odds']} | edge {bet['edge']}% | £{stake:.2f}")
-        else:
-            print(f"  — {m['home']} vs {m['away']}: no edge")
-        all_matches.append((m["home"], m["away"], m["line"],
-                            m["over_odds"], m["under_odds"], bet, stake, m.get("time_uk", "?")))
-
-    # Step 6 — Log bets
-    log_bets(bets, surface, today)
-
-    # Step 7 — Telegram alert
-    send_predictions(all_matches, bets, surface, today, bankroll,
-                     kelly_fraction=kelly_fraction, max_stake=max_stake)
-
-    print(f"\n  Done. {len(bets)} bet(s) sent to Telegram.")
     print("=" * 60)
 
 
-def loop():
+def loop(tours=None):
     """Run main() every day at 9am UK time. Use with: screen -dmS tennis python3 tennis/scheduler.py --loop"""
     import time
     import zoneinfo
+    if tours is None:
+        tours = ["atp"]
     uk_tz = zoneinfo.ZoneInfo("Europe/London")
-    print("[scheduler] Loop mode started. Will run daily at 09:00 UK time.")
+    print(f"[scheduler] Loop mode started for {'/'.join(t.upper() for t in tours)}. Will run daily at 09:00 UK time.")
     while True:
         import datetime as dt
         now_uk     = dt.datetime.now(uk_tz)
@@ -457,7 +478,7 @@ def loop():
         print(f"[scheduler] Sleeping {wait/3600:.1f}h until {target.strftime('%Y-%m-%d 09:00 UK')}")
         time.sleep(wait)
         try:
-            main()
+            main(tours)
         except Exception as e:
             print(f"[scheduler] ERROR: {e}")
         time.sleep(60)  # avoid double-firing
@@ -466,9 +487,18 @@ def loop():
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument("--atp",  action="store_true", help="Run ATP predictions")
+    parser.add_argument("--wta",  action="store_true", help="Run WTA predictions")
     parser.add_argument("--loop", action="store_true", help="Run forever, firing at 9am UK time daily")
     args = parser.parse_args()
+    tours = []
+    if args.atp:
+        tours.append("atp")
+    if args.wta:
+        tours.append("wta")
+    if not tours:
+        tours = ["atp"]
     if args.loop:
-        loop()
+        loop(tours)
     else:
-        main()
+        main(tours)

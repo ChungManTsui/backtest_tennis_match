@@ -1,8 +1,15 @@
 ﻿**/__pycache__/
 *.pyc
 *.pyo
-data/*.log
-data/backtest_results.csv
-data/bet_log.csv
 note.txt
-tennis/.env
+
+# tennis data files — too large / generated
+tennis/data/*.csv
+tennis/data/*.html
+tennis/data/*.json
+
+# Betfair historical data — large binary files
+tennis/odd_data/
+
+# root-level legacy data
+data/
