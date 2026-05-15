@@ -22,6 +22,7 @@ from data_loader import load_data
 from serve_model import build_serve_stats, compute_serve_hold_pct
 from markov import games_distribution_fast, prob_hold_game
 from telegram_bot import send_predictions, send_pnl_update, send_heartbeat
+from predict_today import apply_filter
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def _get_api_key() -> str:
@@ -116,6 +117,8 @@ def fetch_odds(tour: str = "atp") -> list[dict]:
             r.raise_for_status()
             data = r.json()
             if data:
+                for ev in data:
+                    ev["_sport"] = sport
                 all_events.extend(data)
                 print(f"  {sport}: {len(data)} match(es)")
         except Exception:
@@ -142,6 +145,8 @@ def parse_events(events: list[dict]) -> list[dict]:
         except Exception:
             continue
 
+        sport    = ev.get("_sport", "")
+        best_of  = 5 if any(gs in sport for gs in ("french_open", "wimbledon", "us_open", "australian_open")) else 3
         home = ev.get("home_team", "")
         away = ev.get("away_team", "")
         bookmakers = ev.get("bookmakers", [])
@@ -182,6 +187,7 @@ def parse_events(events: list[dict]) -> list[dict]:
             "under_odds": best_under,
             "avg_over":   avg_over,
             "avg_under":  avg_under,
+            "best_of":    best_of,
             "time_uk":    uk_dt.strftime("%H:%M"),
         })
     return parsed
@@ -408,7 +414,7 @@ def _ask(prompt: str, default: str) -> str:
     return val if val else default
 
 
-def main(tours=None):
+def main(tours=None, bet_filter="both"):
     today   = str(date.today())
     surface = get_surface()
 
@@ -471,19 +477,22 @@ def main(tours=None):
         bets = []
         all_matches = []
         for m in matches:
+            best_of = m.get("best_of", 3)
             bet = predict(m["home"], m["away"], m["line"],
                           m["over_odds"], m["under_odds"], surface, lookup,
                           avg_over=m.get("avg_over"), avg_under=m.get("avg_under"))
             stake = None
-            if bet:
+            if bet and apply_filter(bet, bet_filter, best_of):
                 stake = bankroll * min(bet["kelly"] * kelly_fraction, max_stake)
                 bets.append((m["home"], m["away"], bet, stake))
                 print(f"  ★ {m['home']} vs {m['away']}: {bet['side']} {bet['line']} "
                       f"@ {bet['odds']} | edge {bet['edge']}% | £{stake:.2f}")
             else:
-                print(f"  — {m['home']} vs {m['away']}: no edge")
+                reason = "no edge" if not bet else f"filtered ({bet_filter})"
+                print(f"  — {m['home']} vs {m['away']}: {reason}")
             all_matches.append((m["home"], m["away"], m["line"],
-                                m["over_odds"], m["under_odds"], bet, stake, m.get("time_uk", "?")))
+                                m["over_odds"], m["under_odds"], bet if bet and apply_filter(bet, bet_filter, best_of) else None,
+                                stake, m.get("time_uk", "?")))
 
         # Step 6 — Log bets
         log_bets(bets, surface, today)
@@ -508,7 +517,7 @@ def main(tours=None):
     print("=" * 60)
 
 
-def loop(tours=None):
+def loop(tours=None, bet_filter="both"):
     """Run main() every day at 9am UK time. Use with: screen -dmS tennis python3 tennis/scheduler.py --loop"""
     import time
     import zoneinfo
@@ -526,7 +535,7 @@ def loop(tours=None):
         print(f"[scheduler] Sleeping {wait/3600:.1f}h until {target.strftime('%Y-%m-%d 09:00 UK')}")
         time.sleep(wait)
         try:
-            main(tours)
+            main(tours, bet_filter=bet_filter)
         except Exception as e:
             print(f"[scheduler] ERROR: {e}")
         time.sleep(60)  # avoid double-firing
@@ -559,6 +568,6 @@ if __name__ == "__main__":
     if not tours:
         tours = ["atp"]
     if args.loop:
-        loop(tours)
+        loop(tours, bet_filter=args.filter)
     else:
-        main(tours)
+        main(tours, bet_filter=args.filter)
