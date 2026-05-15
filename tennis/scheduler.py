@@ -487,10 +487,22 @@ def loop(tours=None):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--atp",  action="store_true", help="Run ATP predictions")
-    parser.add_argument("--wta",  action="store_true", help="Run WTA predictions")
-    parser.add_argument("--loop", action="store_true", help="Run forever, firing at 9am UK time daily")
+    parser.add_argument("--atp",        action="store_true", help="Run ATP predictions")
+    parser.add_argument("--wta",        action="store_true", help="Run WTA predictions")
+    parser.add_argument("--loop",       action="store_true", help="Run forever, firing at 9am UK time daily")
+    parser.add_argument("--kelly",      type=float, default=None, help="Kelly fraction (e.g. 0.25)")
+    parser.add_argument("--max-stake",  type=float, default=None, help="Max stake fraction (e.g. 0.05)")
+    parser.add_argument("--bankroll",   type=float, default=None, help="Starting bankroll in £")
+    parser.add_argument("--filter",     default="both", choices=["over", "under", "both", "under_opt"])
     args = parser.parse_args()
+
+    if args.kelly:
+        os.environ["KELLY_FRACTION"] = str(args.kelly)
+    if args.max_stake:
+        os.environ["MAX_STAKE"] = str(args.max_stake)
+    if args.bankroll:
+        os.environ["BANKROLL"] = str(args.bankroll)
+
     tours = []
     if args.atp:
         tours.append("atp")
