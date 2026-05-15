@@ -445,7 +445,7 @@ def main(tours=None):
 
         # Step 7 — Telegram alert
         send_predictions(all_matches, bets, surface, today, bankroll,
-                         kelly_fraction=kelly_fraction, max_stake=max_stake)
+                         kelly_fraction=kelly_fraction, max_stake=max_stake, tour=tour)
 
         print(f"\n  [{tour.upper()}] Done. {len(bets)} bet(s) sent to Telegram.")
 

@@ -15,13 +15,15 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 
 def send(message: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    token   = os.environ.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN)
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID)
+    if not token or not chat_id:
         print("  [Telegram] Not configured — skipping.")
         return
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
         r = requests.post(url, json={
-            "chat_id":    TELEGRAM_CHAT_ID,
+            "chat_id":    chat_id,
             "text":       message,
             "parse_mode": "HTML",
         }, timeout=10)
@@ -34,10 +36,12 @@ def send(message: str):
 
 
 def send_predictions(all_matches: list, bets: list, surface: str, date: str,
-                     bankroll: float, kelly_fraction: float = 0.25, max_stake: float = 0.05):
+                     bankroll: float, kelly_fraction: float = 0.25, max_stake: float = 0.05,
+                     tour: str = "ATP"):
+    tour_upper = tour.upper()
     if not all_matches:
         send(
-            f"🎾 <b>ATP Tennis — {date}</b>\n\n"
+            f"🎾 <b>{tour_upper} Tennis — {date}</b>\n\n"
             f"Surface: {surface}\n"
             f"No matches found today.\n\n"
             f"✅ Daily heartbeat — system running."
@@ -45,7 +49,7 @@ def send_predictions(all_matches: list, bets: list, surface: str, date: str,
         return
 
     lines = [
-        f"🎾 <b>ATP Tennis — {date}</b>",
+        f"🎾 <b>{tour_upper} Tennis — {date}</b>",
         f"Surface: {surface} | Matches: {len(all_matches)}\n",
         f"<b>📋 All Today's Matches:</b>",
     ]
