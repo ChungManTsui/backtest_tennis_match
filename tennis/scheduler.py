@@ -525,6 +525,11 @@ def loop(tours=None, bet_filter="both"):
         tours = ["atp"]
     uk_tz = zoneinfo.ZoneInfo("Europe/London")
     print(f"[scheduler] Loop mode started for {'/'.join(t.upper() for t in tours)}. Will run daily at 09:00 UK time.")
+    print(f"[scheduler] Running immediately on startup...")
+    try:
+        main(tours, bet_filter=bet_filter)
+    except Exception as e:
+        print(f"[scheduler] ERROR on startup run: {e}")
     while True:
         import datetime as dt
         now_uk     = dt.datetime.now(uk_tz)
