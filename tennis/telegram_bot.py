@@ -37,15 +37,20 @@ def send(message: str):
 
 def send_predictions(all_matches: list, bets: list, surface: str, date: str,
                      bankroll: float, kelly_fraction: float = 0.25, max_stake: float = 0.05,
-                     tour: str = "ATP"):
+                     tour: str = "ATP", upcoming: list = None):
     tour_upper = tour.upper()
     if not all_matches:
-        send(
+        msg = (
             f"🎾 <b>{tour_upper} Tennis — {date}</b>\n\n"
             f"Surface: {surface}\n"
-            f"No matches found today.\n\n"
-            f"✅ Daily heartbeat — system running."
+            f"No matches with totals lines today.\n"
         )
+        if upcoming:
+            msg += f"\n<b>📅 Upcoming {tour_upper} matches (next 3 days):</b>\n"
+            for m in upcoming[:10]:
+                msg += f"  {m['time_uk']} — {m['home']} vs {m['away']}\n"
+        msg += "\n✅ Daily heartbeat — system running."
+        send(msg)
         return
 
     lines = [

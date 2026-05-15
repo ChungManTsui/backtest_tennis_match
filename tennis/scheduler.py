@@ -47,6 +47,44 @@ def get_surface() -> str:
     return SURFACE_CALENDAR.get(date.today().month, "Hard")
 
 
+def fetch_upcoming_events(tour: str = "atp", days: int = 3) -> list[dict]:
+    """Fetch upcoming scheduled matches for the next N days, even without odds."""
+    import zoneinfo
+    from datetime import timedelta
+    uk_tz    = zoneinfo.ZoneInfo("Europe/London")
+    now_uk   = pd.Timestamp.now(tz=uk_tz)
+    cutoff   = now_uk + timedelta(days=days)
+    sports   = fetch_active_atp_sports(tour)
+    if not sports:
+        return []
+    upcoming = []
+    for sport in sports:
+        try:
+            r = requests.get(
+                f"https://api.the-odds-api.com/v4/sports/{sport}/events",
+                params={"apiKey": _get_api_key(), "dateFormat": "iso"},
+                timeout=10,
+            )
+            if r.status_code != 200:
+                continue
+            for ev in r.json():
+                try:
+                    commence = pd.Timestamp(ev["commence_time"]).tz_convert(uk_tz)
+                except Exception:
+                    continue
+                if now_uk <= commence <= cutoff:
+                    upcoming.append({
+                        "home":     ev.get("home_team", ""),
+                        "away":     ev.get("away_team", ""),
+                        "time_uk":  commence.strftime("%a %d %b %H:%M"),
+                        "sport":    sport,
+                    })
+        except Exception:
+            continue
+    upcoming.sort(key=lambda x: x["time_uk"])
+    return upcoming
+
+
 def fetch_active_atp_sports(tour: str = "atp") -> list[str]:
     prefix = f"tennis_{tour}"
     try:
@@ -422,6 +460,13 @@ def main(tours=None):
         matches = parse_events(events)
         print(f"  {len(matches)} match(es) with totals lines")
 
+        # Fetch upcoming if no matches today
+        upcoming = []
+        if not matches:
+            print(f"  Fetching upcoming {tour.upper()} fixtures...")
+            upcoming = fetch_upcoming_events(tour, days=3)
+            print(f"  {len(upcoming)} upcoming match(es) found")
+
         # Step 5 — Predict
         bets = []
         all_matches = []
@@ -445,7 +490,8 @@ def main(tours=None):
 
         # Step 7 — Telegram alert
         send_predictions(all_matches, bets, surface, today, bankroll,
-                         kelly_fraction=kelly_fraction, max_stake=max_stake, tour=tour)
+                         kelly_fraction=kelly_fraction, max_stake=max_stake,
+                         tour=tour, upcoming=upcoming)
 
         print(f"\n  [{tour.upper()}] Done. {len(bets)} bet(s) sent to Telegram.")
 
