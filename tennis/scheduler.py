@@ -24,7 +24,8 @@ from markov import games_distribution_fast, prob_hold_game
 from telegram_bot import send_predictions, send_pnl_update, send_heartbeat
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ODDS_API_KEY  = os.environ.get("ODDS_API_KEY", "")
+def _get_api_key() -> str:
+    return os.environ.get("ODDS_API_KEY", "")
 START_YEAR    = 2015
 END_YEAR      = 2025
 MIN_EDGE      = 0.04
@@ -50,7 +51,7 @@ def fetch_active_atp_sports() -> list[str]:
     try:
         r = requests.get(
             "https://api.the-odds-api.com/v4/sports",
-            params={"apiKey": ODDS_API_KEY},
+            params={"apiKey": _get_api_key()},
             timeout=10,
         )
         r.raise_for_status()
@@ -68,7 +69,7 @@ def fetch_odds() -> list[dict]:
     for sport in sports:
         try:
             r = requests.get(ODDS_API_URL.format(sport=sport), params={
-                "apiKey": ODDS_API_KEY, "regions": "uk,eu",
+                "apiKey": _get_api_key(), "regions": "uk,eu",
                 "markets": "totals", "oddsFormat": "decimal",
             }, timeout=10)
             if r.status_code in (404, 422):
@@ -287,7 +288,7 @@ def fetch_results_and_update(log_file: str = None):
         try:
             r = requests.get(
                 f"https://api.the-odds-api.com/v4/sports/{sport}/scores",
-                params={"apiKey": ODDS_API_KEY, "daysFrom": 1},
+                params={"apiKey": _get_api_key(), "daysFrom": 1},
                 timeout=10,
             )
             if r.status_code != 200:
@@ -411,7 +412,7 @@ def main(tours=None):
 
         # Step 4 — Fetch today's odds
         print(f"\nFetching {tour.upper()} odds...")
-        if not ODDS_API_KEY:
+        if not _get_api_key():
             print("  ERROR: ODDS_API_KEY not set.")
             send_heartbeat(today, "ERROR: No API key")
             return
