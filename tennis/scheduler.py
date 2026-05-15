@@ -47,7 +47,8 @@ def get_surface() -> str:
     return SURFACE_CALENDAR.get(date.today().month, "Hard")
 
 
-def fetch_active_atp_sports() -> list[str]:
+def fetch_active_atp_sports(tour: str = "atp") -> list[str]:
+    prefix = f"tennis_{tour}"
     try:
         r = requests.get(
             "https://api.the-odds-api.com/v4/sports",
@@ -55,14 +56,14 @@ def fetch_active_atp_sports() -> list[str]:
             timeout=10,
         )
         r.raise_for_status()
-        return [s["key"] for s in r.json() if s.get("active") and "tennis_atp" in s["key"]]
+        return [s["key"] for s in r.json() if s.get("active") and s["key"].startswith(prefix)]
     except Exception as e:
         print(f"  Could not fetch active sports: {e}")
         return []
 
 
-def fetch_odds() -> list[dict]:
-    sports = fetch_active_atp_sports()
+def fetch_odds(tour: str = "atp") -> list[dict]:
+    sports = fetch_active_atp_sports(tour)
     if not sports:
         return []
     all_events = []
@@ -261,7 +262,7 @@ def save_bankroll(bankroll: float):
         json.dump({"bankroll": round(bankroll, 2)}, f)
 
 
-def fetch_results_and_update(log_file: str = None):
+def fetch_results_and_update(log_file: str = None, tour: str = "atp"):
     """
     Auto-fetch yesterday's results and fill in W/L in the bet log automatically.
     Uses The Odds API scores endpoint.
@@ -281,7 +282,7 @@ def fetch_results_and_update(log_file: str = None):
         return
 
     print(f"  Fetching results for {yesterday}...")
-    sports = fetch_active_atp_sports()
+    sports = fetch_active_atp_sports(tour)
 
     scores_map = {}
     for sport in sports:
@@ -392,7 +393,7 @@ def main(tours=None):
         # Step 1 — Auto-fill yesterday's results
         print(f"\n[{tour.upper()}] Checking yesterday's results...")
         try:
-            fetch_results_and_update(log_file=log_file)
+            fetch_results_and_update(log_file=log_file, tour=tour)
         except Exception as e:
             print(f"  Result fetch failed: {e}")
 
@@ -417,7 +418,7 @@ def main(tours=None):
             send_heartbeat(today, "ERROR: No API key")
             return
 
-        events  = fetch_odds()
+        events  = fetch_odds(tour)
         matches = parse_events(events)
         print(f"  {len(matches)} match(es) with totals lines")
 
