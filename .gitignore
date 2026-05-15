@@ -2,6 +2,8 @@
 *.pyc
 *.pyo
 note.txt
+.env
+tennis/.env
 
 # tennis data files — too large / generated
 tennis/data/*.csv
