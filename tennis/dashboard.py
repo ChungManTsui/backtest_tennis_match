@@ -32,14 +32,17 @@ def load_bankroll() -> float:
 
 def load_strategies() -> list[dict]:
     strategies = []
-    for fname in ["strategy_atp.json", "strategy_wta.json", "strategy.json"]:
+    if not os.path.exists(DATA_DIR):
+        return strategies
+    for fname in sorted(os.listdir(DATA_DIR)):
+        if not fname.startswith("strategy_") or not fname.endswith(".json"):
+            continue
         path = os.path.join(DATA_DIR, fname)
-        if os.path.exists(path):
+        try:
             with open(path) as f:
-                s = json.load(f)
-            tours_key = tuple(s.get("tours", []))
-            if not any(tuple(x.get("tours", [])) == tours_key for x in strategies):
-                strategies.append(s)
+                strategies.append(json.load(f))
+        except Exception:
+            continue
     return strategies
 
 

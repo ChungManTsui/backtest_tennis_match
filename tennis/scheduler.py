@@ -438,7 +438,7 @@ def main(tours=None, bet_filter="both", market="totals"):
         next_9 += _dt.timedelta(days=1)
     os.makedirs("tennis/data", exist_ok=True)
     for _tour in tours:
-        with open(f"tennis/data/strategy_{_tour}.json", "w") as _f:
+        with open(f"tennis/data/strategy_{_tour}_{market}.json", "w") as _f:
             json.dump({
                 "tours":          [_tour],
                 "market":         market,
