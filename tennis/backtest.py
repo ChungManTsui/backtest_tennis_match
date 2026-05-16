@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-from markov import games_distribution_fast
+from markov import games_distribution_fast, sets_distribution
 
 MIN_EDGE = 0.04
 MAX_STAKE_PCT = 0.05
@@ -31,6 +31,19 @@ def parse_score_games(score: str):
         return None
 
 
+def parse_score_sets(score: str):
+    if not isinstance(score, str):
+        return None
+    total = 0
+    try:
+        for part in score.strip().split():
+            if "-" in part.split("(")[0]:
+                total += 1
+        return total if total > 0 else None
+    except Exception:
+        return None
+
+
 def _model_median(dist: dict) -> float:
     sorted_items = sorted(dist.items())
     cumulative = 0.0
@@ -42,11 +55,13 @@ def _model_median(dist: dict) -> float:
 
 
 def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = BK_VIG,
-             bet_filter: str = "both", use_real_odds: bool = False) -> dict:
+             bet_filter: str = "both", use_real_odds: bool = False,
+             market: str = "totals") -> dict:
     """
     bet_filter: "both" | "over" | "under" | "under_opt"
     use_real_odds: if True and df has bf_line/bf_over_odds/bf_under_odds columns,
                    use real Betfair closing prices instead of simulated bookmaker.
+    market: "totals" (total games O/U) | "sets" (total sets O/U)
     """
     """
     Walk-forward backtest.
@@ -101,7 +116,12 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
 
     for _, row in df.iterrows():
         actual_games = parse_score_games(row["score"])
-        if actual_games is None or actual_games < 6:
+        actual_sets  = parse_score_sets(row["score"])
+        if market == "sets":
+            actual_value = actual_sets
+        else:
+            actual_value = actual_games
+        if actual_value is None or actual_value < 1:
             continue
 
         best_of = int(row.get("best_of", 3))
@@ -116,8 +136,9 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
         if bk_w is None or bk_l is None or np.isnan(float(bk_w)) or np.isnan(float(bk_l)):
             continue
 
+        dist_fn = sets_distribution if market == "sets" else games_distribution_fast
         try:
-            our_dist = games_distribution_fast(p_w, p_l, best_of)
+            our_dist = dist_fn(p_w, p_l, best_of)
         except Exception:
             continue
         if not our_dist:
@@ -126,6 +147,7 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
         # Check if real Betfair odds are available for this row
         has_real_odds = (
             use_real_odds
+            and market == "totals"  # real odds only available for games market
             and "bf_line" in row.index
             and not pd.isna(row.get("bf_line"))
             and not pd.isna(row.get("bf_over_odds"))
@@ -136,19 +158,17 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
             bk_line       = float(row["bf_line"])
             bk_odds_over  = float(row["bf_over_odds"])
             bk_odds_under = float(row["bf_under_odds"])
-            # Remove Betfair commission (~5%) to get fair implied probabilities
             raw_sum       = (1.0 / bk_odds_over) + (1.0 / bk_odds_under)
             bk_imp_over   = (1.0 / bk_odds_over)  / raw_sum
             bk_imp_under  = (1.0 / bk_odds_under) / raw_sum
         else:
             try:
-                bk_dist = games_distribution_fast(float(bk_w), float(bk_l), best_of)
+                bk_dist = dist_fn(float(bk_w), float(bk_l), best_of)
             except Exception:
                 continue
             if not bk_dist:
                 continue
 
-            # Bookmaker sets line at their median
             bk_line = _model_median(bk_dist)
 
             bk_p_over  = sum(p for g, p in bk_dist.items() if g > bk_line)
@@ -157,7 +177,6 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
             if bk_p_over < 0.01 or bk_p_under < 0.01:
                 continue
 
-            # Bookmaker applies vig
             bk_imp_over  = bk_p_over  * (1 + vig)
             bk_imp_under = bk_p_under * (1 + vig)
             bk_odds_over  = 1.0 / bk_imp_over
@@ -200,7 +219,7 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
         if kelly <= 0:
             continue
 
-        won = (actual_games > bk_line) if bet_side == "Over" else (actual_games < bk_line)
+        won = (actual_value > bk_line) if bet_side == "Over" else (actual_value < bk_line)
         level_name = LEVEL_MAP.get(str(row.get("tourney_level", "A")), "Other")
         hold_gap = p_w - p_l
 
@@ -219,6 +238,7 @@ def backtest(df: pd.DataFrame, starting_bankroll: float = 1000.0, vig: float = B
             "bk_p_hold_l":  round(float(bk_l), 4),
             "line":         bk_line,
             "actual_games": actual_games,
+            "actual_sets":  actual_sets,
             "bet_side":     bet_side,
             "model_prob":   round(bet_prob, 4),
             "bk_odds":      round(bet_odds, 3),

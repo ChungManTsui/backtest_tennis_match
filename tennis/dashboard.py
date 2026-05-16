@@ -10,8 +10,9 @@ import numpy as np
 import streamlit as st
 from datetime import date
 
-DATA_DIR      = os.path.join(os.path.dirname(__file__), "data")
-BANKROLL_FILE = os.path.join(DATA_DIR, "bankroll.json")
+DATA_DIR       = os.path.join(os.path.dirname(__file__), "data")
+BANKROLL_FILE  = os.path.join(DATA_DIR, "bankroll.json")
+STRATEGY_FILE  = os.path.join(DATA_DIR, "strategy.json")
 
 st.set_page_config(
     page_title="Tennis Bet Tracker",
@@ -19,7 +20,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🎾 Barnett-Clarke Tennis Total Games Model")
+st.title("🎾 Barnett-Clarke Tennis Model — Live Dashboard")
 st.caption(f"Live tracking dashboard — {date.today()} | Auto-refreshes every 60s")
 
 
@@ -28,6 +29,53 @@ def load_bankroll() -> float:
         with open(BANKROLL_FILE) as f:
             return float(json.load(f).get("bankroll", 100.0))
     return 100.0
+
+
+def load_strategy() -> dict:
+    if os.path.exists(STRATEGY_FILE):
+        with open(STRATEGY_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def render_strategy_card():
+    s = load_strategy()
+    st.subheader("⚙️ Running Strategy")
+    if not s:
+        st.info("No strategy info yet — start the scheduler to populate this.")
+        st.divider()
+        return
+
+    tours   = ", ".join(t.upper() for t in s.get("tours", []))
+    market  = s.get("market", "totals").capitalize()
+    filt    = s.get("filter", "both")
+    kelly   = s.get("kelly_fraction", 0.25)
+    stake   = s.get("max_stake", 0.05)
+    bankroll= s.get("bankroll", 100.0)
+    last    = s.get("last_run", "—")
+    next_r  = s.get("next_run", "—")
+
+    filter_labels = {
+        "both":      "Over + Under",
+        "over":      "Over Only",
+        "under":     "Under Only",
+        "under_opt": "Under Optimised (bo5 Grand Slams)",
+    }
+    market_labels = {
+        "totals": "Total Games",
+        "sets":   "Total Sets",
+    }
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Tours",    tours)
+    c2.metric("Market",   market_labels.get(s.get("market","totals"), market))
+    c3.metric("Filter",   filter_labels.get(filt, filt))
+    c4.metric("Kelly",    f"{kelly*100:.0f}%")
+    c5.metric("Max Stake",f"{stake*100:.0f}%")
+    c6.metric("Bankroll", f"£{bankroll:.2f}")
+
+    st.caption(f"Last run: {last}  |  Next run: {next_r}")
+    st.divider()
 
 
 @st.cache_data(ttl=60)
@@ -171,6 +219,9 @@ def render_tour(tour: str):
             show.style.map(colour_result, subset=["Result"]),
             hide_index=True, use_container_width=True)
 
+
+# ── Strategy card ─────────────────────────────────────────────────────────────
+render_strategy_card()
 
 # ── Tour tabs ─────────────────────────────────────────────────────────────────
 atp_exists = os.path.exists(os.path.join(DATA_DIR, "bet_log_atp.csv"))

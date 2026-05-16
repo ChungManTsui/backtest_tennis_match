@@ -116,3 +116,37 @@ def prob_over_under(p_hold_a: float, p_hold_b: float, line: float, best_of: int 
     p_over = sum(p for g, p in dist.items() if g > line)
     p_under = sum(p for g, p in dist.items() if g < line)
     return p_over, p_under
+
+
+def sets_distribution(p_hold_a: float, p_hold_b: float, best_of: int = 3) -> dict:
+    """
+    Returns {total_sets_in_match: probability}.
+    bo3: possible values are 2 or 3.
+    bo5: possible values are 3, 4, or 5.
+    Uses _set_distribution() to get P(A wins a set), then simulates match set-by-set.
+    """
+    sets_to_win = (best_of + 1) // 2
+    p_a_set, _ = _set_distribution(p_hold_a, p_hold_b)
+    p_b_set = 1 - p_a_set
+
+    match_states = defaultdict(float)
+    match_states[(0, 0)] = 1.0  # (sets_a, sets_b)
+
+    finished = defaultdict(float)
+
+    while match_states:
+        new_states = defaultdict(float)
+        for (sa, sb), prob in match_states.items():
+            if prob < 1e-14:
+                continue
+            for (dsa, dsb), p_sw in [((1, 0), p_a_set), ((0, 1), p_b_set)]:
+                nsa, nsb = sa + dsa, sb + dsb
+                total_sets = nsa + nsb
+                combined = prob * p_sw
+                if nsa == sets_to_win or nsb == sets_to_win:
+                    finished[total_sets] += combined
+                else:
+                    new_states[(nsa, nsb)] += combined
+        match_states = new_states
+
+    return dict(finished)

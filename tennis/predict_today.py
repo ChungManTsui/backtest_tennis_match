@@ -25,7 +25,7 @@ from collections import defaultdict
 
 from data_loader import load_data
 from serve_model import build_serve_stats, compute_serve_hold_pct
-from markov import games_distribution_fast, prob_hold_game
+from markov import games_distribution_fast, sets_distribution, prob_hold_game
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 START_YEAR = 2015
@@ -72,8 +72,8 @@ def is_grand_slam(sport_key: str) -> bool:
     return any(gs in sport_key for gs in GRAND_SLAM_KEYS)
 
 
-def fetch_odds(api_key: str, tour: str) -> list[dict]:
-    """Fetch all total-games odds for a tour. Returns list of parsed match dicts."""
+def fetch_odds(api_key: str, tour: str, market: str = "totals") -> list[dict]:
+    """Fetch all total-games or total-sets odds for a tour. Returns list of parsed match dicts."""
     sports = fetch_active_sports(api_key, tour)
     if not sports:
         return []
@@ -122,14 +122,24 @@ def fetch_odds(api_key: str, tour: str) -> list[dict]:
                 # Collect all bookmaker prices per line
                 line_prices: dict[float, dict[str, list[float]]] = {}
                 for bk in ev.get("bookmakers", []):
-                    for market in bk.get("markets", []):
-                        if market["key"] != "totals":
+                    for mkt in bk.get("markets", []):
+                        if mkt["key"] != "totals":
                             continue
-                        for outcome in market.get("outcomes", []):
+                        for outcome in mkt.get("outcomes", []):
                             ln   = float(outcome["point"])
                             side = outcome["name"]
                             line_prices.setdefault(ln, {"Over": [], "Under": []})
                             line_prices[ln][side].append(float(outcome["price"]))
+
+                if not line_prices:
+                    continue
+
+                # Filter lines by market type:
+                # sets lines are 2.5 or 3.5; games lines are 15+
+                if market == "sets":
+                    line_prices = {ln: v for ln, v in line_prices.items() if ln <= 5}
+                else:
+                    line_prices = {ln: v for ln, v in line_prices.items() if ln >= 10}
 
                 if not line_prices:
                     continue
@@ -191,7 +201,7 @@ def fuzzy_lookup(name: str, surface: str, lookup: dict):
 
 
 def predict_match(home, away, line, over_odds, under_odds, surface, best_of,
-                  lookup, avg_over=None, avg_under=None):
+                  lookup, avg_over=None, avg_under=None, market="totals"):
     p_w = fuzzy_lookup(home, surface, lookup)
     p_l = fuzzy_lookup(away, surface, lookup)
     if p_w is None or p_l is None:
@@ -201,8 +211,9 @@ def predict_match(home, away, line, over_odds, under_odds, surface, best_of,
     p_w = min(max(p_w, 0.35), 0.95)
     p_l = min(max(p_l, 0.35), 0.95)
 
+    dist_fn = sets_distribution if market == "sets" else games_distribution_fast
     try:
-        dist = games_distribution_fast(p_w, p_l, best_of)
+        dist = dist_fn(p_w, p_l, best_of)
     except Exception as e:
         return {"skip": True, "reason": str(e)}
     if not dist:
@@ -214,13 +225,14 @@ def predict_match(home, away, line, over_odds, under_odds, surface, best_of,
     ref_under   = avg_under or under_odds
     edge_over   = our_p_over  - 1.0 / ref_over
     edge_under  = our_p_under - 1.0 / ref_under
-    mean_g      = sum(g * p for g, p in dist.items())
+    mean_val    = sum(g * p for g, p in dist.items())
+    mean_key    = "mean_sets" if market == "sets" else "mean_games"
 
     result = {
         "skip": False,
         "p_hold_home": round(p_w, 4),
         "p_hold_away": round(p_l, 4),
-        "mean_games":  round(mean_g, 1),
+        mean_key:      round(mean_val, 2),
         "our_p_over":  round(our_p_over, 4),
         "our_p_under": round(our_p_under, 4),
         "edge_over":   round(edge_over, 4),
@@ -328,17 +340,18 @@ def print_pnl_summary(tour: str):
 
 def run_tour(tour: str, api_key: str, surface: str, bet_filter: str,
              bankroll: float | None, kelly_fraction: float, max_stake: float,
-             lookup: pd.DataFrame):
+             lookup: pd.DataFrame, market: str = "totals"):
     today = str(date.today())
+    market_label = "TOTAL SETS" if market == "sets" else "TOTAL GAMES"
     print(f"\n{'='*65}")
-    print(f"  {tour.upper()} — TODAY'S PREDICTIONS ({today})")
+    print(f"  {tour.upper()} — TODAY'S {market_label} PREDICTIONS ({today})")
     print(f"  Filter: {bet_filter} | Surface: {surface}")
     print(f"{'='*65}")
 
     print(f"\nFetching {tour.upper()} odds...")
-    matches = fetch_odds(api_key, tour)
+    matches = fetch_odds(api_key, tour, market=market)
     if not matches:
-        print(f"  No {tour.upper()} matches with total games lines today.")
+        print(f"  No {tour.upper()} matches with {market_label.lower()} lines today.")
         return []
 
     print(f"  {len(matches)} match(es) found.\n")
@@ -356,6 +369,7 @@ def run_tour(tour: str, api_key: str, surface: str, bet_filter: str,
             home, away, m["line"], m["over_odds"], m["under_odds"],
             surface, best_of, lookup,
             avg_over=m.get("avg_over"), avg_under=m.get("avg_under"),
+            market=market,
         )
 
         if result is None or result.get("skip"):
@@ -364,7 +378,8 @@ def run_tour(tour: str, api_key: str, surface: str, bet_filter: str,
             all_matches_info.append((home, away, m["line"], m["over_odds"], m["under_odds"], None, None, m.get("time_uk","?")))
             continue
 
-        print(f"  Model: mean {result['mean_games']} games | "
+        mean_key = "mean_sets" if market == "sets" else "mean_games"
+        print(f"  Model: mean {result.get(mean_key, '?')} {'sets' if market == 'sets' else 'games'} | "
               f"P(over)={result['our_p_over']*100:.1f}% | P(under)={result['our_p_under']*100:.1f}%")
         print(f"  Edge:  over {result['edge_over']*100:+.1f}% | under {result['edge_under']*100:+.1f}%")
 
@@ -413,6 +428,9 @@ def main():
     parser.add_argument("--filter",     default="both",
                         choices=["over", "under", "both", "under_opt"],
                         help="Bet filter (default: both)")
+    parser.add_argument("--market",     default="totals",
+                        choices=["totals", "sets"],
+                        help="Market: totals (total games O/U) or sets (total sets O/U) (default: totals)")
     parser.add_argument("--api-key",    default=os.environ.get("ODDS_API_KEY", ""))
     parser.add_argument("--bankroll",   type=float, default=None)
     parser.add_argument("--kelly",      type=float, default=0.25,
@@ -470,7 +488,7 @@ def main():
         print(f"  {len(lookup)} player-surface profiles loaded")
 
         run_tour(tour, args.api_key, surface, args.filter,
-                 bankroll, args.kelly, args.max_stake, lookup)
+                 bankroll, args.kelly, args.max_stake, lookup, market=args.market)
         print_pnl_summary(tour)
 
     # Generate HTML dashboard

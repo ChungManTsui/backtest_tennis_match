@@ -114,6 +114,9 @@ def main():
     parser.add_argument("--tour",           type=str,   default="atp",
                         choices=["atp", "wta"],
                         help="Tour to backtest: atp or wta (default: atp)")
+    parser.add_argument("--market",         type=str,   default="totals",
+                        choices=["totals", "sets"],
+                        help="Market to backtest: totals (total games O/U) or sets (total sets O/U) (default: totals)")
     parser.add_argument("--reset-yearly",   action="store_true",
                         help="Reset bankroll back to starting amount each year (no compounding across years)")
     parser.add_argument("--real-odds",      action="store_true",
@@ -121,8 +124,9 @@ def main():
     args = parser.parse_args()
 
     tour_label = args.tour.upper()
+    market_label = "TOTAL SETS" if args.market == "sets" else "TOTAL GAMES"
     print("=" * 70)
-    print(f"  BARNETT-CLARKE TENNIS TOTAL GAMES MODEL — {tour_label}")
+    print(f"  BARNETT-CLARKE TENNIS {market_label} MODEL — {tour_label}")
     print(f"  Data: {tour_label} {START_YEAR}-{END_YEAR} | Grand Slams + Masters + 500/250")
     print(f"  Bankroll: £{args.bankroll:,.2f} | Kelly: {args.kelly_fraction*100:.0f}% | Max stake: {args.max_stake*100:.0f}% | Vig: {args.vig*100:.0f}%")
     print("=" * 70)
@@ -154,10 +158,10 @@ def main():
             print(f"  Run: python tennis/betfair_odds_extractor.py first.")
 
     print("\nRunning backtest...")
-    results_both     = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="both",      use_real_odds=use_real_odds)
-    results_over     = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="over",      use_real_odds=use_real_odds)
-    results_under    = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="under",     use_real_odds=use_real_odds)
-    results_under_opt= backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="under_opt", use_real_odds=use_real_odds)
+    results_both     = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="both",      use_real_odds=use_real_odds, market=args.market)
+    results_over     = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="over",      use_real_odds=use_real_odds, market=args.market)
+    results_under    = backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="under",     use_real_odds=use_real_odds, market=args.market)
+    results_under_opt= backtest(df, starting_bankroll=args.bankroll, vig=args.vig, bet_filter="under_opt", use_real_odds=use_real_odds, market=args.market)
 
     for label, results, bet_filter in [
         ("OVER + UNDER (both)",              results_both,      "both"),
@@ -198,14 +202,14 @@ def main():
                 print(f"  {r['prob_bucket']:<12} {r['bets']:>5} {r['predicted_%']:>9.1f}% {r['actual_%']:>7.1f}% {r['diff']:>+5.1f}%{flag}")
             print(f"  (ok = well calibrated within 3%, !! = miscalibrated)")
 
-        out = f"tennis/data/backtest_results_{args.tour}_{bet_filter}{suffix}.csv"
+        out = f"tennis/data/backtest_results_{args.tour}_{args.market}_{bet_filter}{suffix}.csv"
         bets_df.to_csv(out, index=False)
         print(f"\n  Bet log saved to: {out}")
 
     print("=" * 70)
 
     data_dir = os.path.join(os.path.dirname(__file__), "data")
-    report_path = generate_html(args.tour, args.bankroll, args.kelly_fraction, args.max_stake, data_dir, suffix=suffix)
+    report_path = generate_html(args.tour, args.bankroll, args.kelly_fraction, args.max_stake, data_dir, suffix=suffix, market=args.market)
     print(f"\nHTML report saved to: {report_path}")
 
 

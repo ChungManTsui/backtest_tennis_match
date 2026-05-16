@@ -20,7 +20,7 @@ from collections import defaultdict
 
 from data_loader import load_data
 from serve_model import build_serve_stats, compute_serve_hold_pct
-from markov import games_distribution_fast, prob_hold_game
+from markov import games_distribution_fast, sets_distribution, prob_hold_game
 from telegram_bot import send_predictions, send_pnl_update, send_heartbeat
 from predict_today import apply_filter
 
@@ -224,15 +224,16 @@ def fuzzy_lookup(name: str, surface: str, lookup: dict):
 
 
 def predict(home, away, line, over_odds, under_odds, surface, lookup,
-            avg_over=None, avg_under=None):
+            avg_over=None, avg_under=None, market="totals"):
     p_w = fuzzy_lookup(home, surface, lookup)
     p_l = fuzzy_lookup(away, surface, lookup)
     if p_w is None or p_l is None:
         return None
     p_w = min(max(p_w, 0.35), 0.95)
     p_l = min(max(p_l, 0.35), 0.95)
+    dist_fn = sets_distribution if market == "sets" else games_distribution_fast
     try:
-        dist = games_distribution_fast(p_w, p_l, 3)
+        dist = dist_fn(p_w, p_l, 3)
     except Exception:
         return None
     if not dist:
@@ -414,7 +415,7 @@ def _ask(prompt: str, default: str) -> str:
     return val if val else default
 
 
-def main(tours=None, bet_filter="both"):
+def main(tours=None, bet_filter="both", market="totals"):
     today   = str(date.today())
     surface = get_surface()
 
@@ -425,6 +426,27 @@ def main(tours=None, bet_filter="both"):
     bankroll       = load_bankroll(float(os.environ.get("BANKROLL", "100")))
     kelly_fraction = float(os.environ.get("KELLY_FRACTION") or _ask("Kelly fraction (e.g. 0.25 = Quarter Kelly)", "0.25"))
     max_stake      = float(os.environ.get("MAX_STAKE")      or _ask("Max stake per bet (e.g. 0.05 = 5%)", "0.05"))
+
+    # Write strategy.json for dashboard
+    import datetime as _dt
+    import zoneinfo as _zi
+    uk_tz  = _zi.ZoneInfo("Europe/London")
+    now_uk = _dt.datetime.now(uk_tz)
+    next_9 = now_uk.replace(hour=9, minute=0, second=0, microsecond=0)
+    if now_uk >= next_9:
+        next_9 += _dt.timedelta(days=1)
+    os.makedirs("tennis/data", exist_ok=True)
+    with open("tennis/data/strategy.json", "w") as _f:
+        json.dump({
+            "tours":         tours,
+            "market":        market,
+            "filter":        bet_filter,
+            "kelly_fraction":kelly_fraction,
+            "max_stake":     max_stake,
+            "bankroll":      bankroll,
+            "last_run":      now_uk.strftime("%Y-%m-%d %H:%M UK"),
+            "next_run":      next_9.strftime("%Y-%m-%d 09:00 UK"),
+        }, _f, indent=2)
 
     print("=" * 60)
     print(f"  TENNIS SCHEDULER — {today} — {'/'.join(t.upper() for t in tours)}")
@@ -464,7 +486,12 @@ def main(tours=None, bet_filter="both"):
 
         events  = fetch_odds(tour)
         matches = parse_events(events)
-        print(f"  {len(matches)} match(es) with totals lines")
+        # Filter lines by market: sets lines ≤5, games lines ≥10
+        if market == "sets":
+            matches = [m for m in matches if m["line"] <= 5]
+        else:
+            matches = [m for m in matches if m["line"] >= 10]
+        print(f"  {len(matches)} match(es) with {market} lines")
 
         # Fetch upcoming if no matches today
         upcoming = []
@@ -480,7 +507,8 @@ def main(tours=None, bet_filter="both"):
             best_of = m.get("best_of", 3)
             bet = predict(m["home"], m["away"], m["line"],
                           m["over_odds"], m["under_odds"], surface, lookup,
-                          avg_over=m.get("avg_over"), avg_under=m.get("avg_under"))
+                          avg_over=m.get("avg_over"), avg_under=m.get("avg_under"),
+                          market=market)
             stake = None
             if bet and apply_filter(bet, bet_filter, best_of):
                 stake = bankroll * min(bet["kelly"] * kelly_fraction, max_stake)
@@ -517,7 +545,7 @@ def main(tours=None, bet_filter="both"):
     print("=" * 60)
 
 
-def loop(tours=None, bet_filter="both"):
+def loop(tours=None, bet_filter="both", market="totals"):
     """Run main() every day at 9am UK time. Use with: screen -dmS tennis python3 tennis/scheduler.py --loop"""
     import time
     import zoneinfo
@@ -527,7 +555,7 @@ def loop(tours=None, bet_filter="both"):
     print(f"[scheduler] Loop mode started for {'/'.join(t.upper() for t in tours)}. Will run daily at 09:00 UK time.")
     print(f"[scheduler] Running immediately on startup...")
     try:
-        main(tours, bet_filter=bet_filter)
+        main(tours, bet_filter=bet_filter, market=market)
     except Exception as e:
         print(f"[scheduler] ERROR on startup run: {e}")
     while True:
@@ -540,7 +568,7 @@ def loop(tours=None, bet_filter="both"):
         print(f"[scheduler] Sleeping {wait/3600:.1f}h until {target.strftime('%Y-%m-%d 09:00 UK')}")
         time.sleep(wait)
         try:
-            main(tours, bet_filter=bet_filter)
+            main(tours, bet_filter=bet_filter, market=market)
         except Exception as e:
             print(f"[scheduler] ERROR: {e}")
         time.sleep(60)  # avoid double-firing
@@ -556,6 +584,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-stake",  type=float, default=None, help="Max stake fraction (e.g. 0.05)")
     parser.add_argument("--bankroll",   type=float, default=None, help="Starting bankroll in £")
     parser.add_argument("--filter",     default="both", choices=["over", "under", "both", "under_opt"])
+    parser.add_argument("--market",     default="totals", choices=["totals", "sets"],
+                        help="Market: totals (total games O/U) or sets (total sets O/U)")
     args = parser.parse_args()
 
     if args.kelly:
@@ -573,6 +603,6 @@ if __name__ == "__main__":
     if not tours:
         tours = ["atp"]
     if args.loop:
-        loop(tours, bet_filter=args.filter)
+        loop(tours, bet_filter=args.filter, market=args.market)
     else:
-        main(tours, bet_filter=args.filter)
+        main(tours, bet_filter=args.filter, market=args.market)

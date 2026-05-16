@@ -182,14 +182,22 @@ def _section_html(filter_label, bets_df, starting_bankroll, max_stake_pct, chart
     </section>"""
 
 
-def generate_html(tour, starting_bankroll, kelly_fraction, max_stake, data_dir, suffix=""):
-    filters  = [("over", "Over"), ("under", "Under"), ("both", "Over + Under"), ("under_opt", "Under Optimised (bo5 + gap>0)")]
+def generate_html(tour, starting_bankroll, kelly_fraction, max_stake, data_dir, suffix="", market="totals"):
+    filters = [
+        ("over",       "Over Sets" if market == "sets" else "Over Games"),
+        ("under",      "Under Sets" if market == "sets" else "Under Games"),
+        ("both",       "Over + Under Sets" if market == "sets" else "Over + Under Games"),
+        ("under_opt",  "Under Optimised (bo5 + gap>0)"),
+    ]
     sections = []
     chart_idx = 0
     for filt, label in filters:
-        csv_path = os.path.join(data_dir, f"backtest_results_{tour}_{filt}{suffix}.csv")
+        csv_path = os.path.join(data_dir, f"backtest_results_{tour}_{market}_{filt}{suffix}.csv")
         if not os.path.exists(csv_path):
-            continue
+            # fallback to old filename pattern for backwards compatibility
+            csv_path = os.path.join(data_dir, f"backtest_results_{tour}_{filt}{suffix}.csv")
+            if not os.path.exists(csv_path):
+                continue
         df = pd.read_csv(csv_path)
         df["date"] = pd.to_datetime(df["date"])
         if "real_odds" not in df.columns:
@@ -201,16 +209,17 @@ def generate_html(tour, starting_bankroll, kelly_fraction, max_stake, data_dir, 
         print("No CSV data found — run the backtest first.")
         return None
 
-    tour_upper = tour.upper()
-    odds_type  = "Real Betfair Odds" if suffix == "_real" else "Simulated Bookmaker Odds"
-    fracs_desc = " | ".join(f"{l} ({f:.2f})" for l, f in KELLY_FRACTIONS)
+    tour_upper   = tour.upper()
+    market_label = "Total Sets" if market == "sets" else "Total Games"
+    odds_type    = "Real Betfair Odds" if suffix == "_real" else "Simulated Bookmaker Odds"
+    fracs_desc   = " | ".join(f"{l} ({f:.2f})" for l, f in KELLY_FRACTIONS)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Barnett-Clarke Tennis Model — {tour_upper}</title>
+<title>Barnett-Clarke Tennis Model — {tour_upper} {market_label}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   body {{ font-family: Arial, sans-serif; background: #0f1117; color: #eee; margin: 0; padding: 20px; }}
@@ -228,13 +237,13 @@ def generate_html(tour, starting_bankroll, kelly_fraction, max_stake, data_dir, 
 </style>
 </head>
 <body>
-<h1>Barnett-Clarke Tennis Total Games Model &mdash; {tour_upper}</h1>
+<h1>Barnett-Clarke Tennis {market_label} Model &mdash; {tour_upper}</h1>
 <p class="subtitle">{odds_type} &nbsp;|&nbsp; Starting Bankroll: {starting_bankroll:.0f} &nbsp;|&nbsp; {fracs_desc}</p>
 {''.join(sections)}
 </body>
 </html>"""
 
-    out_path = os.path.join(data_dir, f"backtest_report_{tour}{suffix}.html")
+    out_path = os.path.join(data_dir, f"backtest_report_{tour}_{market}{suffix}.html")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"HTML report saved: {out_path}")
@@ -250,5 +259,6 @@ if __name__ == "__main__":
     p.add_argument("--max-stake", type=float, default=0.05)
     p.add_argument("--data-dir",  default="tennis/data")
     p.add_argument("--suffix",    default="")
+    p.add_argument("--market",    default="totals", choices=["totals", "sets"])
     args = p.parse_args()
-    generate_html(args.tour, args.bankroll, args.kelly, args.max_stake, args.data_dir, args.suffix)
+    generate_html(args.tour, args.bankroll, args.kelly, args.max_stake, args.data_dir, args.suffix, market=args.market)
