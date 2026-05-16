@@ -428,7 +428,7 @@ def main(tours=None, bet_filter="both", market="totals"):
     kelly_fraction = float(os.environ.get("KELLY_FRACTION") or _ask("Kelly fraction (e.g. 0.25 = Quarter Kelly)", "0.25"))
     max_stake      = float(os.environ.get("MAX_STAKE")      or _ask("Max stake per bet (e.g. 0.05 = 5%)", "0.05"))
 
-    # Write strategy.json for dashboard
+    # Write strategy.json for dashboard (one file per tour)
     import datetime as _dt
     import zoneinfo as _zi
     uk_tz  = _zi.ZoneInfo("Europe/London")
@@ -437,17 +437,18 @@ def main(tours=None, bet_filter="both", market="totals"):
     if now_uk >= next_9:
         next_9 += _dt.timedelta(days=1)
     os.makedirs("tennis/data", exist_ok=True)
-    with open("tennis/data/strategy.json", "w") as _f:
-        json.dump({
-            "tours":         tours,
-            "market":        market,
-            "filter":        bet_filter,
-            "kelly_fraction":kelly_fraction,
-            "max_stake":     max_stake,
-            "bankroll":      bankroll,
-            "last_run":      now_uk.strftime("%Y-%m-%d %H:%M UK"),
-            "next_run":      next_9.strftime("%Y-%m-%d 09:00 UK"),
-        }, _f, indent=2)
+    for _tour in tours:
+        with open(f"tennis/data/strategy_{_tour}.json", "w") as _f:
+            json.dump({
+                "tours":          [_tour],
+                "market":         market,
+                "filter":         bet_filter,
+                "kelly_fraction": kelly_fraction,
+                "max_stake":      max_stake,
+                "bankroll":       bankroll,
+                "last_run":       now_uk.strftime("%Y-%m-%d %H:%M UK"),
+                "next_run":       next_9.strftime("%Y-%m-%d 09:00 UK"),
+            }, _f, indent=2)
 
     print("=" * 60)
     print(f"  TENNIS SCHEDULER — {today} — {'/'.join(t.upper() for t in tours)}")

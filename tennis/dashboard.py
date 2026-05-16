@@ -12,7 +12,6 @@ from datetime import date
 
 DATA_DIR       = os.path.join(os.path.dirname(__file__), "data")
 BANKROLL_FILE  = os.path.join(DATA_DIR, "bankroll.json")
-STRATEGY_FILE  = os.path.join(DATA_DIR, "strategy.json")
 
 st.set_page_config(
     page_title="Tennis Bet Tracker",
@@ -31,50 +30,57 @@ def load_bankroll() -> float:
     return 100.0
 
 
-def load_strategy() -> dict:
-    if os.path.exists(STRATEGY_FILE):
-        with open(STRATEGY_FILE) as f:
-            return json.load(f)
-    return {}
+def load_strategies() -> list[dict]:
+    strategies = []
+    for fname in ["strategy_atp.json", "strategy_wta.json", "strategy.json"]:
+        path = os.path.join(DATA_DIR, fname)
+        if os.path.exists(path):
+            with open(path) as f:
+                s = json.load(f)
+            tours_key = tuple(s.get("tours", []))
+            if not any(tuple(x.get("tours", [])) == tours_key for x in strategies):
+                strategies.append(s)
+    return strategies
 
 
 def render_strategy_card():
-    s = load_strategy()
+    strategies = load_strategies()
     st.subheader("⚙️ Running Strategy")
-    if not s:
+    if not strategies:
         st.info("No strategy info yet — start the scheduler to populate this.")
         st.divider()
         return
-
-    tours   = ", ".join(t.upper() for t in s.get("tours", []))
-    market  = s.get("market", "totals").capitalize()
-    filt    = s.get("filter", "both")
-    kelly   = s.get("kelly_fraction", 0.25)
-    stake   = s.get("max_stake", 0.05)
-    bankroll= s.get("bankroll", 100.0)
-    last    = s.get("last_run", "—")
-    next_r  = s.get("next_run", "—")
 
     filter_labels = {
         "both":      "Over + Under",
         "over":      "Over Only",
         "under":     "Under Only",
-        "under_opt": "Under Optimised (bo5 Grand Slams)",
+        "under_opt": "Under Opt (bo5 GS)",
     }
     market_labels = {
         "totals": "Total Games",
         "sets":   "Total Sets",
     }
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Tours",    tours)
-    c2.metric("Market",   market_labels.get(s.get("market","totals"), market))
-    c3.metric("Filter",   filter_labels.get(filt, filt))
-    c4.metric("Kelly",    f"{kelly*100:.0f}%")
-    c5.metric("Max Stake",f"{stake*100:.0f}%")
-    c6.metric("Bankroll", f"£{bankroll:.2f}")
+    for s in strategies:
+        tours    = ", ".join(t.upper() for t in s.get("tours", []))
+        market   = market_labels.get(s.get("market", "totals"), s.get("market", "totals"))
+        filt     = filter_labels.get(s.get("filter", "both"), s.get("filter", "both"))
+        kelly    = s.get("kelly_fraction", 0.25)
+        stake    = s.get("max_stake", 0.05)
+        bankroll = s.get("bankroll", 100.0)
+        last     = s.get("last_run", "—")
+        next_r   = s.get("next_run", "—")
 
-    st.caption(f"Last run: {last}  |  Next run: {next_r}")
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Tours",     tours)
+        c2.metric("Market",    market)
+        c3.metric("Filter",    filt)
+        c4.metric("Kelly",     f"{kelly*100:.0f}%")
+        c5.metric("Max Stake", f"{stake*100:.0f}%")
+        c6.metric("Bankroll",  f"£{bankroll:.2f}")
+        st.caption(f"Last run: {last}  |  Next run: {next_r}")
+
     st.divider()
 
 
