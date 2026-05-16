@@ -595,6 +595,7 @@ if __name__ == "__main__":
         os.environ["MAX_STAKE"] = str(args.max_stake)
     if args.bankroll:
         os.environ["BANKROLL"] = str(args.bankroll)
+        save_bankroll(args.bankroll)  # override whatever is in bankroll.json
 
     tours = []
     if args.atp:
