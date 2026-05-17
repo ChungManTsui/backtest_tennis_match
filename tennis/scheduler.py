@@ -29,7 +29,7 @@ from predict_today import apply_filter
 def _get_api_key() -> str:
     return os.environ.get("ODDS_API_KEY", "")
 START_YEAR    = 2015
-END_YEAR      = 2025
+END_YEAR      = 2026
 MIN_EDGE      = 0.04
 LOG_FILE       = "tennis/data/bet_log.csv"
 BANKROLL_FILE  = "tennis/data/bankroll.json"
